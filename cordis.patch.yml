@@ -1,0 +1,70 @@
+# dsh-mworks-ai bundle patch
+#
+# Three rows:
+#   1. mcp-mworks-syslab     — official Syslab MCP server (stdio, Julia runtime)
+#   2. mcp-mworks-sysplorer  — official Sysplorer MCP server (stdio, Modelica)
+#   3. dsh-mworks-ai         — this bundle's own Host plugin (detection, tool,
+#                              prompt guidance, Web panel route)
+#
+# Both MCP servers are the ones shipped inside the MWORKS installation; this
+# patch only wires them into the in-box @deepseek-ai/dsh-mcp-client bridge, the
+# same way dsh-computer-use-win wires its own server. Tool names the model sees
+# are mcp__mworks_syslab__* and mcp__mworks_sysplorer__*.
+#
+# Startup parameters below were verified against the installed servers:
+#   - Syslab needs --syslab-root (hard requirement; the server panics without
+#     it) and must run --syslab-display-mode=nodesktop so Julia calls do not
+#     attach to an already-open Syslab desktop and leave stray processes.
+#   - Sysplorer must start through Tools/sysplorer_mcp/main.py, the launcher,
+#     which sets MCP_DEPLOY_ROOT; starting the inner main.py directly breaks
+#     resources_retrieval silently while tools/list still looks healthy.
+#
+# Change a path here if MWORKS lives somewhere else; the Host plugin reports
+# what it can detect in the MWORKS AI panel and through mworks_environment.
+
+- insert:
+    - id: mcp-mworks-syslab
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: mworks_syslab
+        transport: stdio
+        command: 'E:\MWORKS\Syslab 2026b\Tools\syslab-mcp-server\syslab-mcp-server-win64.exe'
+        args:
+          - '--syslab-root=E:\MWORKS\Syslab 2026b'
+          - '--julia-root=C:\Users\Public\TongYuan\julia-1.10.10'
+          - '--syslab-display-mode=nodesktop'
+          - '--initialize-syslab-on-startup=false'
+          - '--pkg-offline=true'
+          - '--initial-working-folder=E:\MWORKS'
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+        cwd: 'E:\MWORKS'
+        toolCallTimeoutMs: 300000
+        startupTimeoutMs: 60000
+        failOnStartupError: false
+
+    - id: mcp-mworks-sysplorer
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: mworks_sysplorer
+        transport: stdio
+        command: 'E:\MWORKS\Sysplorer 2026b\External\python64\python.exe'
+        args:
+          - 'E:\MWORKS\Sysplorer 2026b\Tools\sysplorer_mcp\main.py'
+          - '--mworks-install-dir'
+          - 'E:\MWORKS\Sysplorer 2026b'
+          - '--sysplorer-platform-label'
+          - 'Sysplorer 2026b'
+          - '--workspace-dir'
+          - 'E:\MWORKS'
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: 'utf-8'
+        cwd: 'E:\MWORKS'
+        toolCallTimeoutMs: 300000
+        startupTimeoutMs: 60000
+        failOnStartupError: false
+
+    - id: dsh-mworks-ai
+      name: dsh-mworks-ai

@@ -1,0 +1,13 @@
+# dependencies
+node_modules/
+
+# npm local cache / debug output
+.npm-cache/
+npm-debug.log*
+
+# package artifacts
+*.tgz
+
+# OS noise
+.DS_Store
+Thumbs.db

@@ -1,0 +1,68 @@
+{
+  "name": "dsh-mworks-ai",
+  "version": "1.0.0",
+  "description": "MWORKS AI for DeepSeek Harness: Syslab and Sysplorer MCP servers, official MWORKS skills, and an in-UI MWORKS AI panel.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.19 || >=24"
+  },
+  "scripts": {
+    "test": "node test/render-check.mjs && node test/class-check.mjs && node test/metadata-check.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "mworks",
+    "syslab",
+    "sysplorer",
+    "modelica",
+    "julia",
+    "mcp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaobbl/dsh-mworks-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xiaobbl/dsh-mworks-ai/issues"
+  },
+  "homepage": "https://github.com/xiaobbl/dsh-mworks-ai#readme",
+  "author": "xiaobbl",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  }
+}

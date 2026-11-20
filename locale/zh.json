@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "MWORKS AI",
+    "description": "按官方 Syslab AI / Sysplorer AI 的方式把 MWORKS 接入 DeepSeek Harness：以 stdio 方式桥接两个官方 MCP 服务（mcp__mworks_syslab__* 提供 Julia 执行、环境检测、帮助检索与 MATLAB 转 Julia 映射；mcp__mworks_sysplorer__* 提供 Modelica 建模、检查、翻译、仿真、结果读取与库文档），并把官方 MWORKS 工作规则加入智能体指令。本插件在「插件」页自己的条目下提供「运行环境」一节，显示检测到的 Syslab / Sysplorer 安装与版本、Julia 运行时、每个 MCP 服务所需路径是否齐全、本会话可调用的 MWORKS 技能，并提供「重新检测」按钮。插件不向对话界面添加任何内容：没有输入框控件，也没有对话卡片。能力取决于本机安装的产品：Syslab 缺失时 Julia 类工具不可用，Sysplorer 缺失时 Modelica 类工具不可用。这一节报告的是安装状态而非连接状态：工具数量是官方服务的声明值，唯一能证明服务真的应答的是调用一次工具。模型检查、翻译、仿真等调用可能持续数分钟，因此工具超时设为 5 分钟。插件只读取安装路径与版本文件，不向 MWORKS 安装目录写入任何内容。关闭插件会同时移除两个 MCP 连接、工具、指令与这一节。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}

@@ -1,0 +1,76 @@
+name: Publish to npm
+
+# Publishes the package to npm whenever a GitHub Release is published,
+# and can also be run by hand from the Actions tab.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish ${{ github.event.release.tag_name || 'manual' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            RELEASE_VERSION="${TAG#v}"
+            if [ "${RELEASE_VERSION}" != "${PKG_VERSION}" ]; then
+              echo "::error::Release tag ${TAG} does not match package.json version ${PKG_VERSION}."
+              exit 1
+            fi
+          else
+            RELEASE_VERSION="${PKG_VERSION}"
+          fi
+          echo "version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing version ${RELEASE_VERSION}"
+
+      - name: Run plugin checks
+        run: npm test
+
+      - name: Check whether this version is already on npm
+        id: probe
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          if npm view "dsh-mworks-ai@${VERSION}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "dsh-mworks-ai@${VERSION} is already published; skipping."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: steps.probe.outputs.published == 'false'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ "${{ steps.probe.outputs.published }}" = "true" ]; then
+            echo "### npm: dsh-mworks-ai@${VERSION} already published" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### npm: published dsh-mworks-ai@${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+            echo "https://www.npmjs.com/package/dsh-mworks-ai/v/${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          fi
