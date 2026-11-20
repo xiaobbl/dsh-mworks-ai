@@ -15,6 +15,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      auth:
+        description: "npm authentication mode"
+        type: choice
+        options: [auto, oidc, token]
+        default: auto
 
 permissions:
   contents: read
@@ -64,14 +70,19 @@ jobs:
         id: auth
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          REQUESTED_MODE: ${{ inputs.auth || 'auto' }}
         run: |
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            echo "mode=token" >> "$GITHUB_OUTPUT"
-            echo "Using the NPM_TOKEN repository secret."
+          if [ "${REQUESTED_MODE}" = "oidc" ]; then
+            MODE=oidc
+          elif [ "${REQUESTED_MODE}" = "token" ]; then
+            MODE=token
+          elif [ -n "${NPM_TOKEN:-}" ]; then
+            MODE=token
           else
-            echo "mode=oidc" >> "$GITHUB_OUTPUT"
-            echo "No NPM_TOKEN secret; using npm trusted publishing over OIDC."
+            MODE=oidc
           fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "npm authentication mode: ${MODE}"
 
       - name: Check whether this version is already on npm
         id: probe

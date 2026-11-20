@@ -1,6 +1,6 @@
 {
   "name": "dsh-mworks-ai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MWORKS AI for DeepSeek Harness: Syslab and Sysplorer MCP servers, official MWORKS skills, and an in-UI MWORKS AI panel.",
   "type": "module",
   "main": "lib/index.js",
