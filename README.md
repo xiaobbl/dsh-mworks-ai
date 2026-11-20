@@ -60,3 +60,19 @@ node test/metadata-check.mjs   # display metadata and artwork limits
 - The plugin only reads paths and version files. It writes nothing into the MWORKS directories, and it never starts a GUI.
 - The section reports installation state, not connection health: the tool counts are what the official servers declare (8 and 15), and calling a tool is the only proof that one answered. Run `mworks_environment`, or open this bundle's page under Plugins, to see what was detected.
 - Turning the bundle off removes both MCP connections, the tool, the instructions and the button.
+
+## Releasing
+
+`package.json` holds the version; the git tag and the GitHub Release must match it (`v` prefix is stripped before comparing).
+
+1. Bump `version` in `package.json` and `npm test`.
+2. Commit, then tag and push:
+
+   ```bash
+   git tag -a v1.0.1 -m "dsh-mworks-ai 1.0.1"
+   git push origin main --tags
+   ```
+
+3. Publish a GitHub Release for that tag. `.github/workflows/npm-publish.yml` runs on `release: published`: it verifies the tag against `package.json`, runs the checks, and publishes to npm (skipping versions that already exist).
+
+Authentication prefers npm **Trusted Publishing** (OIDC, no secret) and falls back to the `NPM_TOKEN` repository secret, so a granular token works until the trusted publisher is configured.
