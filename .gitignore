@@ -10,4 +10,5 @@ npm-debug.log*
 
 # OS noise
 .DS_Store
-Thumbs.db
+Thumbs.db.npmrc-local
+.npm-cache/
