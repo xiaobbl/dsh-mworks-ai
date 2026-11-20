@@ -2,6 +2,15 @@ name: Publish to npm
 
 # Publishes the package to npm whenever a GitHub Release is published,
 # and can also be run by hand from the Actions tab.
+#
+# Authentication, in order of preference:
+#   1. npm Trusted Publishing (OIDC) — no secret required. Configure it on
+#      npmjs.com: package -> Settings -> Trusted Publisher -> GitHub Actions,
+#      repository `xiaobbl/dsh-mworks-ai`, workflow `npm-publish.yml`.
+#   2. A repository secret `NPM_TOKEN` (granular access token with
+#      "Read and write" on this package). Used automatically when present and
+#      trusted publishing is not configured.
+# Never set both for the same publish.
 on:
   release:
     types: [published]
@@ -9,7 +18,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # npm provenance / trusted publishing
 
 jobs:
   publish:
@@ -36,7 +45,7 @@ jobs:
             TAG="${{ github.event.release.tag_name }}"
             RELEASE_VERSION="${TAG#v}"
             if [ "${RELEASE_VERSION}" != "${PKG_VERSION}" ]; then
-              echo "::error::Release tag ${TAG} does not match package.json version ${PKG_VERSION}."
+              echo "::error::Release tag ${TAG} does not match package.json version ${PKG_VERSION}. Bump package.json before publishing a release."
               exit 1
             fi
           else
@@ -47,6 +56,19 @@ jobs:
 
       - name: Run plugin checks
         run: npm test
+
+      - name: Detect npm authentication mode
+        id: auth
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            echo "mode=token" >> "$GITHUB_OUTPUT"
+            echo "Using the NPM_TOKEN repository secret."
+          else
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+            echo "No NPM_TOKEN secret; using npm trusted publishing over OIDC."
+          fi
 
       - name: Check whether this version is already on npm
         id: probe
@@ -60,11 +82,15 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish to npm
-        if: steps.probe.outputs.published == 'false'
+      - name: Publish to npm (token)
+        if: steps.probe.outputs.published == 'false' && steps.auth.outputs.mode == 'token'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to npm (trusted publishing)
+        if: steps.probe.outputs.published == 'false' && steps.auth.outputs.mode == 'oidc'
+        run: npm publish --access public --provenance
 
       - name: Summary
         run: |
