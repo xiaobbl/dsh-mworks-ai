@@ -5,10 +5,15 @@ node_modules/
 .npm-cache/
 npm-debug.log*
 
+# local npm registry credentials
+.npmrc-local
+
 # package artifacts
 *.tgz
 
+# scratch release notes (per-release files)
+.release-notes-*.md
+
 # OS noise
 .DS_Store
-Thumbs.db.npmrc-local
-.npm-cache/
+Thumbs.db
