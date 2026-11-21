@@ -1,7 +1,7 @@
 {
   "name": "dsh-mworks-ai",
-  "version": "1.0.1",
-  "description": "MWORKS AI for DeepSeek Harness: Syslab and Sysplorer MCP servers, official MWORKS skills, and an in-UI MWORKS AI panel.",
+  "version": "1.1.0",
+  "description": "MWORKS AI for DeepSeek Harness: Syslab and Sysplorer MCP servers owned by the MCP manager (live state plus in-place reconnect), official MWORKS skills and working rules, and a Runtime environment section on the plugin page.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -25,7 +25,7 @@
     "node": "^22.19 || >=24"
   },
   "scripts": {
-    "test": "node test/render-check.mjs && node test/class-check.mjs && node test/metadata-check.mjs"
+    "test": "node test/render-check.mjs && node test/class-check.mjs && node test/metadata-check.mjs && node test/host-check.mjs"
   },
   "keywords": [
     "dsh",

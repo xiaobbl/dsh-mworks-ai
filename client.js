@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
     var PACKAGE_NAME = 'dsh-mworks-ai'
     var LOCALE_NS = 'dshMworksAi'
     var ROUTE = '/api/dsh-mworks-ai/environment'
+    var RESTART_ROUTE = '/api/dsh-mworks-ai/restart'
 
     var zh = {
       sectionTitle: '运行环境',
@@ -41,10 +42,22 @@ window.__ModuleLoader__.load({
       notFound: '未找到',
       missingHint: '未在本机找到该产品的安装目录。安装后点「重新检测」即可；若装在其它路径，请修改本插件的 cordis.patch.yml 配置。',
       mcpServers: '官方 MCP 服务',
-      mcpHint: '由本插件以 stdio 方式接入，工具名形如 mcp__mworks_syslab__* 与 mcp__mworks_sysplorer__*。工具数量来自官方服务的声明；实际可用性以工具调用结果为准。',
+      mcpHint: '由本插件以 stdio 方式接入，工具名形如 mcp__mworks_syslab__* 与 mcp__mworks_sysplorer__*。下面是实时连接状态；「重新连接」只重启本插件的 MCP 子进程，不会重启 Sysplorer 或其它窗口。',
       pathsFound: '路径齐全',
       pathsMissing: '路径缺失',
       declaredTools: '连上后约 {count} 个工具',
+      stateConnected: '已连接',
+      stateConnecting: '连接中',
+      stateReconnecting: '重连中',
+      stateFailed: '连接失败',
+      stateDisabled: '已停用',
+      stateAbsent: '未注册',
+      stateUnknown: '未知状态',
+      stateUnmanaged: '无 MCP 管理器',
+      reconnect: '重新连接',
+      reconnecting: '正在重连…',
+      reconnectFailed: '重新连接失败：{error}',
+      managedTools: '{count} 个工具已注册',
       skills: '本会话可用的 MWORKS 技能',
       skillsHint: '来自本机 skill 目录，智能体可直接调用。',
       noSkills: '本会话未发现 MWORKS 技能。',
@@ -70,10 +83,22 @@ window.__ModuleLoader__.load({
       notFound: 'Not found',
       missingHint: 'No installation directory was found for this product. Install it and press Re-detect; if it lives elsewhere, edit this plugin configuration in cordis.patch.yml.',
       mcpServers: 'Official MCP servers',
-      mcpHint: 'Bridged over stdio by this plugin; tools are named mcp__mworks_syslab__* and mcp__mworks_sysplorer__*. The counts are what the official servers declare; call a tool to see what actually answers.',
+      mcpHint: 'Bridged over stdio by this plugin; tools are named mcp__mworks_syslab__* and mcp__mworks_sysplorer__*. Below is the live connection state. Reconnect replaces only this plugin\'s MCP child; it does not restart Sysplorer or any other window.',
       pathsFound: 'Paths found',
       pathsMissing: 'Paths missing',
       declaredTools: 'about {count} tools once connected',
+      stateConnected: 'Connected',
+      stateConnecting: 'Connecting',
+      stateReconnecting: 'Reconnecting',
+      stateFailed: 'Failed',
+      stateDisabled: 'Disabled',
+      stateAbsent: 'Not registered',
+      stateUnknown: 'Unknown state',
+      stateUnmanaged: 'No MCP manager',
+      reconnect: 'Reconnect',
+      reconnecting: 'Reconnecting…',
+      reconnectFailed: 'Reconnect failed: {error}',
+      managedTools: '{count} tools registered',
       skills: 'MWORKS skills available in this session',
       skillsHint: 'Read from the local skill directories and callable by the agent.',
       noSkills: 'No MWORKS skill is visible to this session.',
@@ -93,6 +118,7 @@ window.__ModuleLoader__.load({
       '.mworksai-btn{appearance:none;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:none;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:12.5px;line-height:24px;padding:0 10px;cursor:pointer;white-space:nowrap}',
       '@media (hover:hover){.mworksai-btn:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed)}}',
       '.mworksai-btn:disabled{opacity:.45;cursor:default}',
+      '.mworksai-btn-tiny{margin-left:auto;font-size:11.5px;line-height:20px;padding:0 8px}',
       '.mworksai-btn:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary))}',
       '.mworksai-sec{display:flex;flex-direction:column;gap:6px;padding-top:12px;border-top:.5px solid var(--dsw-alias-border-l2)}',
       '.mworksai-sec:first-of-type{padding-top:0;border-top:0}',
@@ -181,12 +207,44 @@ window.__ModuleLoader__.load({
     }
 
     /** The two MCP rows. Counts are declared by the servers, not probed. */
+    /** Label for one connection state, so the chip never shows a raw enum. */
+    function stateLabel(t, state) {
+      if (state === 'connected') return t('stateConnected')
+      if (state === 'connecting') return t('stateConnecting')
+      if (state === 'reconnecting') return t('stateReconnecting')
+      if (state === 'failed') return t('stateFailed')
+      if (state === 'disabled') return t('stateDisabled')
+      if (state === 'absent') return t('stateAbsent')
+      if (state === 'unmanaged') return t('stateUnmanaged')
+      return t('stateUnknown')
+    }
+
+    /**
+     * The two MCP cards with their live connection state and a reconnect
+     * control per server. A server that stopped answering is the failure this
+     * section exists to make visible: without it the only symptom is a call
+     * that hangs until its timeout.
+     */
     function McpSection(props) {
       var t = props.t
       var servers = props.servers
+      var onReconnect = props.onReconnect
+      var busyServer = props.busyServer
+      var note = props.note
       if (!Array.isArray(servers) || servers.length === 0) return null
 
       var cards = servers.map(function (server) {
+        var healthy = server.healthy === true
+        var state = server.state
+        var toolText = typeof server.toolCount === 'number'
+          ? t('managedTools', { count: server.toolCount })
+          : t('declaredTools', { count: server.declaredTools })
+        var canReconnect = typeof onReconnect === 'function'
+          && state !== 'connected'
+          && state !== 'unmanaged'
+          && server.manageable !== false
+        var busy = busyServer === server.server
+
         return h(
           'div',
           { key: server.server, className: 'mworksai-card' },
@@ -196,12 +254,23 @@ window.__ModuleLoader__.load({
             h('span', null, server.label || server.server),
             h(
               'span',
-              { className: 'mworksai-chip ' + (server.ready ? 'mworksai-chip-ok' : 'mworksai-chip-warn') },
-              server.ready ? t('pathsFound') : t('pathsMissing'),
+              { className: 'mworksai-chip ' + (healthy ? 'mworksai-chip-ok' : 'mworksai-chip-warn') },
+              stateLabel(t, state),
             ),
-            h('span', { className: 'mworksai-chip' }, t('declaredTools', { count: server.tools })),
+            h('span', { className: 'mworksai-chip' }, toolText),
+            canReconnect
+              ? h('button', {
+                type: 'button',
+                className: 'mworksai-btn mworksai-btn-tiny',
+                disabled: busy,
+                onClick: function () { onReconnect(server.server) },
+              }, busy ? t('reconnecting') : t('reconnect'))
+              : null,
           ),
           h('div', { className: 'mworksai-card-meta' }, 'mcp__' + server.server + '__*'),
+          typeof server.detail === 'string' && state !== 'connected'
+            ? h('div', { className: 'mworksai-card-meta' }, server.detail)
+            : null,
         )
       })
 
@@ -211,6 +280,9 @@ window.__ModuleLoader__.load({
         h('h3', { className: 'mworksai-sec-title' }, t('mcpServers')),
         h('p', { className: 'mworksai-hint' }, t('mcpHint')),
         cards,
+        typeof note === 'string' && note.length > 0
+          ? h('p', { className: 'mworksai-error' }, note)
+          : null,
       )
     }
 
@@ -245,6 +317,9 @@ window.__ModuleLoader__.load({
       var state = React.useState({ status: 'loading', view: null, error: null })
       var snapshot = state[0]
       var setSnapshot = state[1]
+      var restart = React.useState({ server: null, note: null })
+      var restartState = restart[0]
+      var setRestart = restart[1]
 
       var load = React.useCallback(function () {
         setSnapshot({ status: 'loading', view: null, error: null })
@@ -258,6 +333,36 @@ window.__ModuleLoader__.load({
             setSnapshot({ status: 'failed', view: null, error: String((error && error.message) || error) })
           })
       }, [])
+
+      /**
+       * Rebuild one MCP server, then re-read the environment so the card shows
+       * the new state instead of the stale one.
+       */
+      var reconnect = React.useCallback(function (server) {
+        setRestart({ server: server, note: null })
+        fetch(RESTART_ROUTE, {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ server: server }),
+        })
+          .then(function (response) {
+            return response.json().then(function (data) { return { ok: response.ok, data: data } })
+          })
+          .then(function (result) {
+            if (!result.ok || result.data === null || result.data.ok !== true) {
+              var reason = result.data && result.data.error ? result.data.error : 'restart refused'
+              setRestart({ server: null, note: reason })
+              return
+            }
+            setRestart({ server: null, note: null })
+            load()
+          })
+          .catch(function (error) {
+            setRestart({ server: null, note: String((error && error.message) || error) })
+          })
+      }, [load])
 
       // Only fetch for our own page: every other plugin's page renders null.
       React.useEffect(function () {
@@ -322,7 +427,16 @@ window.__ModuleLoader__.load({
             }),
           ))
         }
-        body.push(h(McpSection, { key: 'mcp', t: t, servers: view.mcpServers }))
+        body.push(h(McpSection, {
+          key: 'mcp',
+          t: t,
+          servers: view.mcp !== undefined && view.mcp !== null && Array.isArray(view.mcp.servers)
+            ? view.mcp.servers
+            : view.mcpServers,
+          onReconnect: reconnect,
+          busyServer: restartState.server,
+          note: restartState.note === null ? undefined : t('reconnectFailed', { error: restartState.note }),
+        }))
         body.push(h(SkillSection, { key: 'skills', t: t, skills: view.skills }))
       }
 

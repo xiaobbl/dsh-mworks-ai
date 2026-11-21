@@ -16,9 +16,30 @@ The package declares `dsh.bundle.patch` (`cordis.patch.yml`) and `dsh.client`, s
 
 | Surface | What you get |
 |---|---|
-| Tools | `mcp__mworks_syslab__*` (8 tools: Julia execution, environment detection, help search, MATLAB→Julia mapping) and `mcp__mworks_sysplorer__*` (15 tools: session, library, model, check, translate, simulate, layout, results, plotting, API/model docs, resources). Plus `mworks_environment`, which reports the detected installation. |
-| Instructions | The official MWORKS working rules: Syslab needs `read_syslab_skill` → `detect_syslab_toolboxes` before any code execution; prefer `Ty*` packages; confirm APIs from local help; call `session_manager` before other Sysplorer tools; keep outputs out of the installation directories. |
-| UI | A **Runtime environment** section on this bundle's own page under **Plugins**, below the configuration the Plugin Manager draws. It lists the detected Syslab and Sysplorer installations and versions, the Julia runtime, both MCP servers with their path status, and the MWORKS skills this session can call, with a **Re-detect** button. The section renders nothing on any other plugin's page. Nothing is added to the conversation: no composer control, no chat row. |
+| Tools | `mcp__mworks_syslab__*` (8 tools: Julia execution, environment detection, help search, MATLAB→Julia mapping) and `mcp__mworks_sysplorer__*` (15 tools: session, library, model, check, translate, simulate, layout, results, plotting, API/model docs, resources). Plus `mworks_environment` (installation + live MCP state), `mworks_mcp_status`, and `mworks_mcp_restart`. |
+| Instructions | The official MWORKS working rules: Syslab needs `read_syslab_skill` → `detect_syslab_toolboxes` before any code execution; prefer `Ty*` packages; confirm APIs from local help; call `session_manager` before other Sysplorer tools; keep outputs out of the installation directories. Plus the recovery rule: a MWORKS call that stops answering is not fixed by retrying — read `mworks_mcp_status` and rebuild the server instead. |
+| UI | A **Runtime environment** section on this bundle's own page under **Plugins**, below the configuration the Plugin Manager draws. It lists the detected Syslab and Sysplorer installations and versions, the Julia runtime, both MCP servers with their live connection state, and the MWORKS skills this session can call, with **Re-detect** and, for a server that is not connected, **Reconnect**. The section renders nothing on any other plugin's page. Nothing is added to the conversation. |
+
+## Why the MCP servers are owned by the MCP manager
+
+`cordis.patch.yml` contains only this plugin's own row: the two servers are contributed at runtime through `ctx.mcpManager.register()`, not as bare `@deepseek-ai/dsh-mcp-client` rows. That buys two things a bare row cannot:
+
+- **Observable state.** A server reports `connecting` / `connected` / `reconnecting` / `failed` with its registered tool count and last error, in the section and in `mworks_mcp_status`.
+- **In-place recovery.** `mcpManager.restart(name)` remounts just that MCP child.
+
+Both matter because of a failure mode that otherwise stays invisible: when Sysplorer is restarted underneath a running session, the MCP child keeps running but stays attached to the old engine port. It emits no close and no error, so the client bridge has nothing to reconnect on, and every subsequent call blocks until `toolCallTimeoutMs` (five minutes) expires. Killing/remounting the child is what re-runs engine discovery and re-attaches to the live port — verified by killing a wedged child and watching a fresh one attach to the new port.
+
+## Configuration
+
+Server definitions (command, args, env, cwd, timeouts, reconnect policy) live in the `SERVERS` table of `lib/index.js`. Defaults:
+
+| Setting | Value | Why |
+|---|---|---|
+| `toolCallTimeoutMs` | 300000 | A model check, translation or simulation can legitimately take minutes. This is also the worst-case cost of a wedged call, so lower it if your simulations are short. |
+| `startupTimeoutMs` | 60000 | Sysplorer's first attach can take a while. |
+| `reconnect` | enabled, 500 ms → 5 s backoff, 10 attempts | Recovers a child that actually exits. It cannot see a *wedged* child, which is what `mworks_mcp_restart` is for. |
+
+A profile must mount `@deepseek-ai/dsh-mcp-manager` (the Web and Desktop profiles do). Without it the plugin still loads, but contributes no MCP servers, and `mworks_environment` says the state cannot be reported or repaired.
 
 ## Requirements
 
@@ -44,15 +65,16 @@ Both MCP rows use a five-minute tool timeout because a model check, translation 
 
 ## Checks
 
-`test/` holds three checks that run without the app:
+`test/` holds four checks that run without the app:
 
 ```bash
+node test/host-check.mjs       # MCP registration, tools, routes, status mapping
 node test/render-check.mjs     # renders the detail-page section
 node test/class-check.mjs      # every class used is defined, every rule is used
 node test/metadata-check.mjs   # display metadata and artwork limits
 ```
 
-`render-check.mjs` is the one that matters for UI changes: it walks the real element tree and asserts the contract (only `plugins.detail.section`, null on foreign pages, no fetch before the page opens), so a component that throws — which makes the host blank the section — fails the check instead of shipping.
+`host-check.mjs` pins the MCP-manager contract (including that Sysplorer starts through the launcher and Syslab runs `nodesktop`), and `render-check.mjs` is the one that matters for UI changes: it walks the real element tree and asserts the contract (only `plugins.detail.section`, null on foreign pages, no fetch before the page opens), so a component that throws — which makes the host blank the section — fails the check instead of shipping.
 
 ## Limits
 

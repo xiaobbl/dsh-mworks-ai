@@ -115,9 +115,16 @@ const SAMPLE = {
   },
   julia: { installed: true, root: 'C:\\Users\\Public\\TongYuan\\julia-1.10.10', otherRoots: [] },
   skills: { roots: [], mworks: ['syslab-environment', 'ty-sysplorer-modeling-rules'] },
+  mcp: {
+    manager: true,
+    servers: [
+      { server: 'mworks_syslab', label: 'Syslab MCP Server', declaredTools: 8, state: 'connected', healthy: true, toolCount: 8, detail: 'connected, 8 tools registered' },
+      { server: 'mworks_sysplorer', label: 'Sysplorer MCP Server', declaredTools: 15, state: 'connected', healthy: true, toolCount: 15, detail: 'connected, 15 tools registered' },
+    ],
+  },
   mcpServers: [
-    { server: 'mworks_syslab', label: 'Syslab MCP Server', tools: 8, ready: true },
-    { server: 'mworks_sysplorer', label: 'Sysplorer MCP Server', tools: 15, ready: true },
+    { server: 'mworks_syslab', label: 'Syslab MCP Server', tools: 8, healthy: true },
+    { server: 'mworks_sysplorer', label: 'Sysplorer MCP Server', tools: 15, healthy: true },
   ],
 }
 
@@ -297,6 +304,53 @@ check(fetchCalls.length === 0, 'section fetched the environment before its own p
   const text = textOf(settled.element).join(' ')
   check(text.includes(en.sectionTitle), 'English section title missing')
   check(text.includes(en.pathsFound), 'English path chip missing')
+}
+
+// ---- a disconnected server is visible and offers a reconnect that POSTs
+{
+  componentState.delete(component)
+  const disconnected = {
+    ...SAMPLE,
+    mcp: {
+      manager: true,
+      servers: [
+        { server: 'mworks_syslab', label: 'Syslab MCP Server', declaredTools: 8, state: 'connected', healthy: true, toolCount: 8, detail: 'connected, 8 tools registered' },
+        { server: 'mworks_sysplorer', label: 'Sysplorer MCP Server', declaredTools: 15, state: 'reconnecting', healthy: false, attempt: 3, maxAttempts: 10, detail: 'reconnecting (attempt 3/10): connection lost' },
+      ],
+    },
+  }
+  const calls = []
+  globalThis.fetch = (url, init) => {
+    calls.push({ url, init })
+    if (String(url).endsWith('/restart')) {
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, server: 'mworks_sysplorer', mcp: disconnected.mcp }) })
+    }
+    return Promise.resolve({ ok: true, json: async () => disconnected })
+  }
+
+  const subject = { kind: 'bundle', pkg: { name: 'dsh-mworks-ai' } }
+  const settled = await mount(component, { t: makeT(zh), subject })
+  const text = textOf(settled.element).join(' ')
+  check(text.includes(zh.stateReconnecting), 'a reconnecting server is not shown as reconnecting')
+  check(text.includes('connection lost'), 'the last error is not shown for a disconnected server')
+
+  const buttons = buttonsOf(settled.element)
+  const reconnect = buttons.find((button) => button.label === zh.reconnect)
+  check(reconnect !== undefined, 'a disconnected server offers no reconnect control')
+  check(buttons.length === 2, `expected the refresh and one reconnect control, got ${buttons.length}`)
+
+  reconnect?.onClick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const posted = calls.find((call) => String(call.url).endsWith('/restart'))
+  check(posted !== undefined, 'reconnect did not POST to the restart route')
+  check(posted?.init?.method === 'POST', 'reconnect did not use POST')
+  check(
+    typeof posted?.init?.body === 'string' && JSON.parse(posted.init.body).server === 'mworks_sysplorer',
+    'reconnect POST body does not name the server',
+  )
+
+  // Restore the plain sample for the remaining cases.
+  globalThis.fetch = (...args) => { fetchCalls.push(args[0]); return fetchImpl(...args) }
 }
 
 if (failures.length > 0) {
