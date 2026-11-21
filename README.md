@@ -29,6 +29,19 @@ The package declares `dsh.bundle.patch` (`cordis.patch.yml`) and `dsh.client`, s
 
 Both matter because of a failure mode that otherwise stays invisible: when Sysplorer is restarted underneath a running session, the MCP child keeps running but stays attached to the old engine port. It emits no close and no error, so the client bridge has nothing to reconnect on, and every subsequent call blocks until `toolCallTimeoutMs` (five minutes) expires. Killing/remounting the child is what re-runs engine discovery and re-attaches to the live port — verified by killing a wedged child and watching a fresh one attach to the new port.
 
+## Skills
+
+The MWORKS skills are **registered by this plugin from the copies inside the MWORKS installation** (`<Sysplorer>/Tools/sysplorer_mcp/resources/modeling_skills` and `<Syslab>/Tools/syslab-skills`), the same way a skill bundle registers its own `skills/` directory. That matters because the MWORKS installers also copy those bundles into an AI client's folder (`%USERPROFILE%\.config\opencode\skills` for OpenCode), and no DeepSeek Harness provider scans that path on its own — without an explicit contribution, the skills reach the catalog only when some other plugin happens to read that directory.
+
+- **No dependency on OpenCode.** OpenCode need not be installed and its folder need not exist; the plugin reads the installation instead.
+- **No interference.** The plugin writes nothing into any client's skill folder, and it fills a gap only: when the registry already resolves any MWORKS skill, it registers nothing, so it never duplicates or overrides another provider's decisions (including a per-skill disable list).
+- **Only MWORKS skills are taken from shared folders.** Every bundle counts inside the installation directories; from a shared client directory such as OpenCode's, only names MWORKS owns (`ty-`, `syslab-`, `ta-`, `modelica-library-workflow`, `sysplorer-mds-docs`) are claimed.
+- **Gap fill by name.** A skill the registry already resolves is left to whichever provider supplies it; only missing names are registered from the installation.
+- **Opt out.** Set `registerSkills: false` on this plugin's row to stop the contribution entirely, for example when another provider manages the MWORKS skills and you want its per-skill filtering to win.
+- **Names come from frontmatter.** Folded (`>-`) and literal (`|`) descriptions are parsed, and each registration carries a directory `resourceBase`, so a skill's `references/`, `templates/` and `tests/` resolve against the installed bundle.
+
+The Runtime environment section and `mworks_environment` report what the registry actually resolves and say whether that answer came from the registry or from the on-disk scan.
+
 ## Configuration
 
 Server definitions (command, args, env, cwd, timeouts, reconnect policy) live in the `SERVERS` table of `lib/index.js`. Defaults:
@@ -43,25 +56,17 @@ A profile must mount `@deepseek-ai/dsh-mcp-manager` (the Web and Desktop profile
 
 ## Requirements
 
-- A local MWORKS installation. The patch is written for this machine:
-  - Syslab `E:\MWORKS\Syslab 2026b`
-  - Sysplorer `E:\MWORKS\Sysplorer 2026b`
-  - Julia `C:\Users\Public\TongYuan\julia-1.10.10`
+- A local MWORKS installation. Paths are listed in the `SERVERS` table of `lib/index.js`; the Runtime environment section and `mworks_environment` report what is actually found.
+- The profile must mount `@deepseek-ai/dsh-skill` (every standard profile does) for the skills to reach the agent, and `@deepseek-ai/dsh-mcp-manager` for the MCP servers. Both are part of the Web and Desktop profiles.
 
-  Edit `cordis.patch.yml` if MWORKS lives elsewhere; the Runtime environment section and `mworks_environment` report what is actually found.
-- The MWORKS skills you want the agent to follow, installed into a skill root the Harness scans (for example `~/.config/opencode/skills`, where the MWORKS installers put them).
+## Startup parameters that matter
 
-## Configuration
+`cordis.patch.yml` inserts one row, this plugin's own; the two MCP servers are contributed at runtime (see above). Two flags cost a debugging session each:
 
-`cordis.patch.yml` inserts three rows:
-
-| Row | Role |
+| Where | Detail |
 |---|---|
-| `mcp-mworks-syslab` | `@deepseek-ai/dsh-mcp-client` → `syslab-mcp-server-win64.exe` over stdio. `--syslab-display-mode=nodesktop` keeps Julia calls off your open Syslab desktop; `--syslab-root` is mandatory or the server panics. |
-| `mcp-mworks-sysplorer` | `@deepseek-ai/dsh-mcp-client` → Sysplorer's bundled `python.exe` running `Tools/sysplorer_mcp/main.py`. Start through that launcher: it exports `MCP_DEPLOY_ROOT`, and starting the inner `main.py` breaks `resources_retrieval` while `tools/list` still looks healthy. |
-| `dsh-mworks-ai` | This bundle's Host plugin: environment detection, the `mworks_environment` tool, the prompt section, and the `/api/dsh-mworks-ai/environment` route the section reads. |
-
-Both MCP rows use a five-minute tool timeout because a model check, translation or simulation can take minutes.
+| Syslab args | `--syslab-display-mode=nodesktop` keeps Julia calls off an open Syslab desktop; `--syslab-root` is mandatory or the server panics. |
+| Sysplorer entry | Start through `Tools/sysplorer_mcp/main.py`, the launcher that exports `MCP_DEPLOY_ROOT`. Starting the inner `main.py` breaks `resources_retrieval` while `tools/list` still looks healthy. |
 
 ## Checks
 

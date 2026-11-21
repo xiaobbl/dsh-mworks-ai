@@ -114,7 +114,7 @@ const SAMPLE = {
     mcpLauncher: 'E:\\MWORKS\\Sysplorer 2026b\\Tools\\sysplorer_mcp\\main.py',
   },
   julia: { installed: true, root: 'C:\\Users\\Public\\TongYuan\\julia-1.10.10', otherRoots: [] },
-  skills: { roots: [], mworks: ['syslab-environment', 'ty-sysplorer-modeling-rules'] },
+  skills: { source: 'registry', registry: true, onDisk: ['syslab-environment', 'ty-sysplorer-modeling-rules'], roots: [], mworks: ['syslab-environment', 'ty-sysplorer-modeling-rules'] },
   mcp: {
     manager: true,
     servers: [

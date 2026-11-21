@@ -44,13 +44,32 @@ const manager = makeManager([
   { name: 'mworks_sysplorer', status: { state: 'reconnecting', attempt: 3, maxAttempts: 10, nextRetryAtMs: Date.now() + 900, lastError: 'connection lost' } },
 ])
 
+// A skill registry that already serves MWORKS skills would be respected; this
+// fake starts empty so the plugin is expected to contribute its own.
+const skillRegistrations = []
+let registrySkills = []
+const skillsService = {
+  async list() { return registrySkills },
+  register(skill) {
+    skillRegistrations.push(skill)
+    return () => {
+      const index = skillRegistrations.findIndex((entry) => entry.name === skill.name)
+      if (index >= 0) skillRegistrations.splice(index, 1)
+    }
+  },
+}
+
 const ctx = {
   logger: {
     info: (m) => logs.info.push(m),
     warn: (m) => logs.warn.push(m),
     error: (m) => logs.error.push(m),
   },
-  get: (name) => (name === 'mcpManager' ? manager : undefined),
+  get: (name) => {
+    if (name === 'mcpManager') return manager
+    if (name === 'skills') return skillsService
+    return undefined
+  },
   effect(fn) {
     const cleanup = fn()
     cleanups.push(cleanup)
@@ -61,6 +80,7 @@ const ctx = {
     const scoped = {
       ...ctx,
       mcpManager: manager,
+      skills: skillsService,
       webServer: {
         register(route) {
           routes.set(route.path, route)
@@ -154,11 +174,47 @@ check(without.manager === false, 'absence of a manager is not reported')
 check(without.servers.every((s) => s.state === 'unmanaged' && s.healthy === false), 'unmanaged servers are not marked')
 
 // ---- environment report
-const environment = plugin.detectEnvironment(ctx)
+const environment = await plugin.detectEnvironment(ctx)
 check(typeof environment.generatedAt === 'string', 'environment has no timestamp')
 check(environment.mcp?.manager === true, 'environment report has no live MCP block')
 check(Array.isArray(environment.mcpServers) && environment.mcpServers.length === 2, 'environment report has no server summary')
 check(Array.isArray(environment.skills?.mworks), 'environment report has no skill list')
+check(environment.skills?.source === 'registry', `skill source is ${environment.skills?.source}, expected registry`)
+// The report is rendered from these entries: a nested object prints as
+// "[object Object]" and hides the path the user needs for diagnosis.
+check(
+  environment.skills.roots.every((root) => typeof root.path === 'string' && root.path.length > 0),
+  'a detected skill root has no path string',
+)
+
+// ---- skills contributed from the installation, not from another client's folder
+await new Promise((resolve) => setTimeout(resolve, 0))
+check(skillRegistrations.length > 0, 'no MWORKS skills were registered from the installation')
+const registeredNames = skillRegistrations.map((skill) => skill.name)
+for (const expected of ['ty-sysplorer-modeling-rules', 'syslab-environment', 'ta-vehicle-modeling']) {
+  check(registeredNames.includes(expected), `${expected} was not registered`)
+}
+check(
+  skillRegistrations.every((skill) => typeof skill.content === 'string' && skill.content.length > 0),
+  'a registered skill has no body',
+)
+check(
+  skillRegistrations.every((skill) => skill.resourceBase?.kind === 'directory' && skill.resourceBase.path.length > 0),
+  'a registered skill has no resource base',
+)
+check(
+  skillRegistrations.every((skill) => typeof skill.description === 'string' && skill.description.length > 20),
+  'a registered skill has a truncated description (folded frontmatter not parsed)',
+)
+check(
+  registeredNames.every((name) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)),
+  'a registered skill name violates the kebab-case grammar',
+)
+// Names owned by other products in a shared client folder must not be claimed.
+check(
+  !registeredNames.includes('diagnose-word-workfile-error') && !registeredNames.includes('wechat-chat-reader'),
+  'skills owned by another product were claimed',
+)
 
 // ---- routes
 for (const path of ['/api/dsh-mworks-ai/environment', '/api/dsh-mworks-ai/restart']) {
@@ -191,23 +247,24 @@ function makeRequest({ method = 'GET', headers = {}, body } = {}) {
 // GET environment
 {
   const response = makeResponse()
-  routes.get('/api/dsh-mworks-ai/environment').handler(makeRequest(), response)
+  await routes.get('/api/dsh-mworks-ai/environment').handler(makeRequest(), response)
   check(response.state.status === 200, `environment route returned ${response.state.status}`)
   const parsed = JSON.parse(response.state.body || '{}')
   check(parsed.mcp?.manager === true, 'environment route payload has no MCP state')
+  check(Array.isArray(parsed.skills?.mworks), 'environment route payload has no skill list')
 }
 
 // method not allowed
 {
   const response = makeResponse()
-  routes.get('/api/dsh-mworks-ai/environment').handler(makeRequest({ method: 'DELETE' }), response)
+  await routes.get('/api/dsh-mworks-ai/environment').handler(makeRequest({ method: 'DELETE' }), response)
   check(response.state.status === 405, `environment route accepted DELETE (${response.state.status})`)
 }
 
 // cross-site refused
 {
   const response = makeResponse()
-  routes.get('/api/dsh-mworks-ai/environment').handler(
+  await routes.get('/api/dsh-mworks-ai/environment').handler(
     makeRequest({ headers: { 'sec-fetch-site': 'cross-site' } }),
     response,
   )
@@ -244,6 +301,85 @@ function makeRequest({ method = 'GET', headers = {}, body } = {}) {
   const result = await tool.execute({ server: 'mworks_syslab' })
   check(result.ok === true, `restart tool returned ${JSON.stringify(result)}`)
   check(restarted.length === before + 1 && restarted.at(-1) === 'mworks_syslab', 'restart tool did not restart the named server')
+}
+
+// ---- gap fill: a skill another provider already resolves is not duplicated
+// (this re-applies the plugin, so it runs after every other assertion)
+{
+  const before = new Set(skillRegistrations.map((skill) => skill.name))
+  registrySkills = [{ name: 'ty-sysplorer-modeling-rules', description: 'provided elsewhere' }]
+  const second = {
+    ...ctx,
+    get: (name) => {
+      if (name === 'skills') return skillsService
+      return undefined
+    },
+    inject(names, callback) {
+      callback({ ...second, skills: skillsService, webServer: { register: () => () => {} } })
+      return () => {}
+    },
+  }
+  plugin.apply(second, {})
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  check(
+    skillRegistrations.every((skill) => skill.name !== 'ty-sysplorer-modeling-rules' || before.has(skill.name)),
+    'the plugin registered a skill another provider already resolves',
+  )
+  registrySkills = []
+}
+
+// ---- the contribution can be switched off
+{
+  const before = skillRegistrations.length
+  plugin.apply({
+    ...ctx,
+    get: () => undefined,
+    inject(names, callback) {
+      // No MCP manager here, but the plugin still expects the full context shape.
+      callback({ ...ctx, skills: skillsService, webServer: { register: () => () => {} } })
+      return () => {}
+    },
+  }, { registerSkills: false })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  check(skillRegistrations.length === before, 'registerSkills: false still registered skills')
+  check(
+    logs.info.some((line) => line.includes('skill contribution disabled')),
+    'registerSkills: false did not say so in the log',
+  )
+}
+
+// ---- the installation alone supplies every skill: a shared client folder adds nothing
+{
+  const installation = {
+    sysplorer: { modelingSkillsDir: joinModeling() },
+    syslab: { skillsDir: joinSyslabSkills() },
+  }
+  const { bundles } = plugin.discoverSkillBundles(installation)
+  check(bundles.length >= 30, `discovery found ${bundles.length} bundles`)
+  // Every bundle must come from an installation directory; if the opencode
+  // folder contributed anything, some bundle would live outside them.
+  const outsideInstall = bundles.filter((bundle) => (
+    !bundle.dir.startsWith(joinModeling()) && !bundle.dir.startsWith(joinSyslabSkills())
+  ))
+  check(
+    outsideInstall.length === 0,
+    `these skills came from a client folder rather than the installation: ${outsideInstall.map((bundle) => bundle.name).join(', ')}`,
+  )
+  check(
+    bundles.some((bundle) => bundle.name === 'ty-sysplorer-modeling-rules'),
+    'the Sysplorer modeling rules were not discovered from the installation',
+  )
+  // Folded frontmatter must not leak the block marker into the description.
+  const rules = bundles.find((bundle) => bundle.name === 'ty-sysplorer-modeling-rules')
+  check(rules !== undefined && !rules.description.startsWith('>-'), 'folded description was not unfolded')
+  check(rules !== undefined && rules.description.length > 100, 'unfolded description looks truncated')
+}
+
+function joinModeling() {
+  return 'E:\\MWORKS\\Sysplorer 2026b\\Tools\\sysplorer_mcp\\resources\\modeling_skills'
+}
+function joinSyslabSkills() {
+  return 'E:\\MWORKS\\Syslab 2026b\\Tools\\syslab-skills'
 }
 
 // ---- disposal releases the registrations

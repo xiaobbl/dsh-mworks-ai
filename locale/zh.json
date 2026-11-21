@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "MWORKS AI",
-    "description": "按官方 Syslab AI / Sysplorer AI 的方式把 MWORKS 接入 DeepSeek Harness。两个官方 MCP 服务（mcp__mworks_syslab__* 提供 Julia 执行、环境检测、帮助检索与 MATLAB 转 Julia 映射；mcp__mworks_sysplorer__* 提供 Modelica 建模、检查、翻译、仿真、结果读取与库文档）通过宿主 MCP 管理器托管，因此连接状态可见，并且单个服务可以就地重建而无需重启 DeepSeek Harness。插件同时把官方 MWORKS 工作规则加入智能体指令，其中包括故障处置规则：MWORKS 调用不再响应时，应查看状态并重连该服务，而不是重试——重试只会再烧掉一个完整超时。本插件页的「运行环境」一节显示检测到的 Syslab / Sysplorer 安装与版本、Julia 运行时、两个 MCP 服务的实时状态（未连接时可点「重新连接」），以及本会话可调用的 MWORKS 技能。插件不向对话界面添加任何内容。服务以 stdio 方式从已安装产品启动，因此 Julia 类工具依赖本机 Syslab，Modelica 类工具依赖本机 Sysplorer；若 profile 未挂载 MCP 管理器，则没有 MWORKS MCP 工具，报告也会如实说明。插件只读取安装路径与版本文件，不向 MWORKS 安装目录写入任何内容。模型检查、翻译、仿真等调用可能持续数分钟，因此工具超时设为 5 分钟。关闭插件会同时移除两个 MCP 服务、工具、指令与这一节。",
+    "description": "按官方 Syslab AI / Sysplorer AI 的方式把 MWORKS 接入 DeepSeek Harness。两个官方 MCP 服务（mcp__mworks_syslab__* 提供 Julia 执行、环境检测、帮助检索与 MATLAB 转 Julia 映射；mcp__mworks_sysplorer__* 提供 Modelica 建模、检查、翻译、仿真、结果读取与库文档）通过宿主 MCP 管理器托管，因此连接状态可见，并且单个服务可以就地重建而无需重启 DeepSeek Harness。插件同时把官方 MWORKS 工作规则加入智能体指令，其中包括故障处置规则：MWORKS 调用不再响应时，应查看状态并重连该服务，而不是重试——重试只会再烧掉一个完整超时。本插件页的「运行环境」一节显示检测到的 Syslab / Sysplorer 安装与版本、Julia 运行时、两个 MCP 服务的实时状态（未连接时可点「重新连接」），以及本会话可调用的 MWORKS 技能。插件不向对话界面添加任何内容。服务以 stdio 方式从已安装产品启动，因此 Julia 类工具依赖本机 Syslab，Modelica 类工具依赖本机 Sysplorer；若 profile 未挂载 MCP 管理器，则没有 MWORKS MCP 工具，报告也会如实说明。插件只读取安装路径与版本文件，不向 MWORKS 安装目录写入任何内容。模型检查、翻译、仿真等调用可能持续数分钟，因此工具超时设为 5 分钟。关闭插件会同时移除两个 MCP 服务、工具、指令与这一节。插件还会把 MWORKS 技能从安装目录里的副本注册进本会话，因此无论是否安装了其它 AI 客户端（如 OpenCode），这些技能都能加载；若技能注册表已经能通过用户自己配置的来源解析到它们，插件不注册任何东西，也不改变那一选择。",
     "detail": "docs/DETAIL.zh.md"
   }
 }
