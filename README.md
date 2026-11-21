@@ -56,8 +56,20 @@ A profile must mount `@deepseek-ai/dsh-mcp-manager` (the Web and Desktop profile
 
 ## Requirements
 
-- A local MWORKS installation. Paths are listed in the `SERVERS` table of `lib/index.js`; the Runtime environment section and `mworks_environment` report what is actually found.
+- A local MWORKS installation. The plugin ships **no paths**: at load time it resolves each installation and derives the MCP command, args and working directory from what it found. A product that is not installed contributes no server, and the plugin still loads.
 - The profile must mount `@deepseek-ai/dsh-skill` (every standard profile does) for the skills to reach the agent, and `@deepseek-ai/dsh-mcp-manager` for the MCP servers. Both are part of the Web and Desktop profiles.
+
+## How the installation is found
+
+Resolution is three steps, first hit wins:
+
+| Step | Source |
+|---|---|
+| 1 | This row's config: `syslabRoot`, `sysplorerRoot`, `juliaRoot`, `workspace`, `registerSkills` |
+| 2 | The environment: `MWORKS_HOME`, `MWORKS_SYSLAB_HOME`, `MWORKS_SYSPLORER_HOME`, `MWORKS_JULIA_HOME`, `MWORKS_WORKSPACE` (plus the products' own `SYSLAB_HOME` / `JULIA_ROOT`) |
+| 3 | A directory scan for `<Syslab|Sysplorer> <release>` inside the usual install bases (`%ProgramFiles%`, `%ProgramFiles(x86)%`, `%LOCALAPPDATA%`, the user profile, `<drive>\MWORKS`), newest release first; a directory only counts when the product's payload is present |
+
+A Julia directory only counts when it really is a runtime (`bin/julia`, not a folder that merely resembles one — Syslab also keeps a `syslab-julia` data directory). The modeling workspace defaults to `~/.dsh-mworks-ai/workspace`, created on demand, so nothing is ever written into the installation directories.
 
 ## Startup parameters that matter
 

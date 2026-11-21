@@ -13,9 +13,18 @@
 #     detached — it emits no close or error, so the client bridge has nothing to
 #     reconnect on.
 #
-# Server definitions (command, args, env, cwd, timeouts, reconnect) live in
-# lib/index.js, in the SERVERS table. Startup parameters were verified against
-# the installed servers:
+# Server definitions and their startup parameters live in lib/index.js. The
+# plugin carries no machine path: at load time it resolves each installation
+# from (in this order) this row's config, the environment, and a directory scan,
+# then derives the command, args and working directory from what it found. A
+# product that is not installed contributes no server at all.
+#   - config, e.g. `config: { syslabRoot: D:\MWORKS\Syslab 2026b }` (keys:
+#     syslabRoot, sysplorerRoot, juliaRoot, workspace, registerSkills)
+#   - environment: MWORKS_HOME, MWORKS_SYSLAB_HOME, MWORKS_SYSPLORER_HOME,
+#     MWORKS_JULIA_HOME, MWORKS_WORKSPACE (and SYSLAB_HOME / JULIA_ROOT as the
+#     products' own spellings)
+#
+# Startup parameters were verified against the installed servers:
 #   - Syslab needs --syslab-root (the server panics without it) and must run
 #     --syslab-display-mode=nodesktop, or Julia calls attach to an already open
 #     Syslab desktop and leave stray processes behind.

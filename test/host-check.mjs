@@ -1,19 +1,82 @@
 /**
  * Host-half check: the MCP registration, the three tools, the prompt section,
- * and both routes.
+ * the skill contribution, and both routes.
  *
  * The MCP servers are contributed through `mcpManager.register()`, so this test
  * pins that contract: names, entry fields, cleanup, and the status mapping that
  * turns manager state into what the agent and the page report.
  *
+ * Nothing here may depend on MWORKS being installed: CI runs this on a Linux
+ * runner with no MWORKS. Skill discovery and frontmatter parsing are driven
+ * from a temporary fixture tree; the assertions that need the real installation
+ * run only when this machine has one, and say so when they do not.
+ *
  * Not shipped with the bundle.
  */
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EventEmitter } from 'node:events'
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
 const plugin = await import(`file:///${ROOT.replace(/\\/g, '/')}lib/index.js`)
+
+// ---------------------------------------------------------------- fixture tree
+// A throwaway installation: the plugin must resolve its paths from here, which
+// is also how this test proves nothing is hardcoded to one machine.
+
+const FIXTURE = mkdtempSync(join(tmpdir(), 'dsh-mworks-ai-'))
+const FIXTURE_PATHS = {
+  syslab: join(FIXTURE, 'syslab'),
+  sysplorer: join(FIXTURE, 'sysplorer'),
+  julia: join(FIXTURE, 'julia'),
+  workspace: join(FIXTURE, 'workspace'),
+}
+const JULIA_EXE = process.platform === 'win32' ? 'julia.exe' : 'julia'
+const FIXTURE_SKILLS = {
+  modeling: 'ty-fixture-modeling',
+  syslab: 'syslab-fixture-testing',
+  foreign: 'unrelated-other-product',
+}
+
+function writeFile(path, text = '') {
+  mkdirSync(join(path, '..'), { recursive: true })
+  writeFileSync(path, text)
+}
+
+function writeSkill(root, name, description) {
+  const dir = join(root, name)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'SKILL.md'), [
+    '---',
+    `name: ${name}`,
+    'description: >-',
+    `  ${description}`,
+    '  continued on a second folded line',
+    'metadata:',
+    '  managed-by: test',
+    '---',
+    '',
+    `# ${name}`,
+    '',
+    'Body text.',
+    '',
+  ].join('\n'))
+}
+
+writeSkill(join(FIXTURE_PATHS.sysplorer, 'Tools', 'sysplorer_mcp', 'resources', 'modeling_skills'), FIXTURE_SKILLS.modeling, 'Fixture modeling rules for the host check.')
+writeSkill(join(FIXTURE_PATHS.syslab, 'Tools', 'syslab-skills'), FIXTURE_SKILLS.syslab, 'Fixture Syslab testing skill for the host check.')
+writeFile(join(FIXTURE_PATHS.syslab, 'Tools', 'syslab-mcp-server', 'syslab-mcp-server-win64.exe'))
+writeFile(join(FIXTURE_PATHS.sysplorer, 'Tools', 'sysplorer_mcp', 'main.py'), '# launcher fixture\n')
+writeFile(join(FIXTURE_PATHS.sysplorer, 'External', 'python64', process.platform === 'win32' ? 'python.exe' : 'python'), '')
+writeFile(join(FIXTURE_PATHS.julia, 'bin', JULIA_EXE), '')
+
+// Point detection at the fixture, the way an operator would.
+process.env.MWORKS_SYSLAB_HOME = FIXTURE_PATHS.syslab
+process.env.MWORKS_SYSPLORER_HOME = FIXTURE_PATHS.sysplorer
+process.env.MWORKS_JULIA_HOME = FIXTURE_PATHS.julia
+process.env.MWORKS_WORKSPACE = FIXTURE_PATHS.workspace
 
 // ------------------------------------------------------------------ fake context
 
@@ -128,13 +191,55 @@ for (const name of ['mworks_syslab', 'mworks_sysplorer']) {
 }
 // The two facts that cost a debugging session to learn:
 check(
-  String(byName.get('mworks_sysplorer')?.args?.[0] ?? '').endsWith('sysplorer_mcp\\main.py'),
+  String(byName.get('mworks_sysplorer')?.args?.[0] ?? '').endsWith('main.py'),
   'Sysplorer must start through the launcher main.py, not the inner one',
 )
 check(
   (byName.get('mworks_syslab')?.args ?? []).includes('--syslab-display-mode=nodesktop'),
   'Syslab must run nodesktop',
 )
+
+// Every path must come from the resolved installation, never from a literal.
+check(
+  byName.get('mworks_syslab')?.command === join(FIXTURE_PATHS.syslab, 'Tools', 'syslab-mcp-server', 'syslab-mcp-server-win64.exe'),
+  `Syslab command is not the resolved one: ${byName.get('mworks_syslab')?.command}`,
+)
+check(
+  byName.get('mworks_sysplorer')?.command === join(FIXTURE_PATHS.sysplorer, 'External', 'python64', process.platform === 'win32' ? 'python.exe' : 'python'),
+  `Sysplorer command is not the resolved one: ${byName.get('mworks_sysplorer')?.command}`,
+)
+check(
+  (byName.get('mworks_syslab')?.args ?? []).includes(`--syslab-root=${FIXTURE_PATHS.syslab}`),
+  'Syslab args do not carry the resolved root',
+)
+check(
+  (byName.get('mworks_syslab')?.args ?? []).includes(`--julia-root=${FIXTURE_PATHS.julia}`),
+  'Syslab args do not carry the resolved Julia runtime',
+)
+check(
+  byName.get('mworks_sysplorer')?.cwd === FIXTURE_PATHS.workspace,
+  `Sysplorer cwd is not the resolved workspace: ${byName.get('mworks_sysplorer')?.cwd}`,
+)
+
+// ---- the plugin source carries no machine path
+{
+  const source = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+  const driveLiterals = source.match(/['"`][A-Za-z]:[\\/]/g) ?? []
+  check(driveLiterals.length === 0, `lib/index.js hardcodes a drive path: ${driveLiterals.join(', ')}`)
+  const programFiles = source.match(/['"]C:[\\/]Program Files/g) ?? []
+  check(programFiles.length === 0, 'lib/index.js hardcodes an install base directory')
+}
+
+// ---- a machine without MWORKS contributes no server, and does not throw
+{
+  const empty = { syslab: {}, sysplorer: {}, julia: {} }
+  check(plugin.resolveServers(empty, FIXTURE_PATHS.workspace).length === 0, 'a missing installation produced MCP servers')
+  check(plugin.resolveServers({ syslab: {}, sysplorer: { mcpLauncher: '/x/main.py', mcpPython: '/x/python', root: '/x' }, julia: {} }, FIXTURE_PATHS.workspace).length === 1, 'a partially installed machine did not contribute the product it has')
+  // An explicit config path beats the environment, which is how a user corrects a wrong guess.
+  const configured = plugin.detectInstallation({ syslabRoot: FIXTURE_PATHS.syslab, sysplorerRoot: FIXTURE_PATHS.sysplorer, juliaRoot: FIXTURE_PATHS.julia })
+  check(configured.syslab.root === FIXTURE_PATHS.syslab, 'an explicit syslabRoot did not win')
+  check(configured.julia.root === FIXTURE_PATHS.julia, 'an explicit juliaRoot did not win')
+}
 
 // ---- tools
 for (const name of ['mworks_environment', 'mworks_mcp_status', 'mworks_mcp_restart']) {
@@ -189,10 +294,9 @@ check(
 
 // ---- skills contributed from the installation, not from another client's folder
 await new Promise((resolve) => setTimeout(resolve, 0))
-check(skillRegistrations.length > 0, 'no MWORKS skills were registered from the installation')
 const registeredNames = skillRegistrations.map((skill) => skill.name)
-for (const expected of ['ty-sysplorer-modeling-rules', 'syslab-environment', 'ta-vehicle-modeling']) {
-  check(registeredNames.includes(expected), `${expected} was not registered`)
+for (const expected of [FIXTURE_SKILLS.modeling, FIXTURE_SKILLS.syslab]) {
+  check(registeredNames.includes(expected), `${expected} was not registered from the fixture installation`)
 }
 check(
   skillRegistrations.every((skill) => typeof skill.content === 'string' && skill.content.length > 0),
@@ -202,15 +306,19 @@ check(
   skillRegistrations.every((skill) => skill.resourceBase?.kind === 'directory' && skill.resourceBase.path.length > 0),
   'a registered skill has no resource base',
 )
+// A folded `>-` description must arrive unfolded, on one line.
 check(
-  skillRegistrations.every((skill) => typeof skill.description === 'string' && skill.description.length > 20),
-  'a registered skill has a truncated description (folded frontmatter not parsed)',
+  skillRegistrations
+    .filter((skill) => skill.name.startsWith('ty-fixture') || skill.name.startsWith('syslab-fixture'))
+    .every((skill) => typeof skill.description === 'string' && !skill.description.startsWith('>-') && skill.description.includes('continued on a second folded line')),
+  'a fixture skill description was not unfolded from its folded block',
 )
 check(
   registeredNames.every((name) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)),
   'a registered skill name violates the kebab-case grammar',
 )
 // Names owned by other products in a shared client folder must not be claimed.
+check(!registeredNames.includes(FIXTURE_SKILLS.foreign), 'a skill owned by another product was claimed')
 check(
   !registeredNames.includes('diagnose-word-workfile-error') && !registeredNames.includes('wechat-chat-reader'),
   'skills owned by another product were claimed',
@@ -307,7 +415,7 @@ function makeRequest({ method = 'GET', headers = {}, body } = {}) {
 // (this re-applies the plugin, so it runs after every other assertion)
 {
   const before = new Set(skillRegistrations.map((skill) => skill.name))
-  registrySkills = [{ name: 'ty-sysplorer-modeling-rules', description: 'provided elsewhere' }]
+  registrySkills = [{ name: FIXTURE_SKILLS.modeling, description: 'provided elsewhere' }]
   const second = {
     ...ctx,
     get: (name) => {
@@ -321,8 +429,9 @@ function makeRequest({ method = 'GET', headers = {}, body } = {}) {
   }
   plugin.apply(second, {})
   await new Promise((resolve) => setTimeout(resolve, 0))
+  const countOf = (name) => skillRegistrations.filter((skill) => skill.name === name).length
   check(
-    skillRegistrations.every((skill) => skill.name !== 'ty-sysplorer-modeling-rules' || before.has(skill.name)),
+    countOf(FIXTURE_SKILLS.modeling) === 1,
     'the plugin registered a skill another provider already resolves',
   )
   registrySkills = []
@@ -348,38 +457,42 @@ function makeRequest({ method = 'GET', headers = {}, body } = {}) {
   )
 }
 
-// ---- the installation alone supplies every skill: a shared client folder adds nothing
+// ---- discovery is driven purely by the roots it is given
 {
-  const installation = {
-    sysplorer: { modelingSkillsDir: joinModeling() },
-    syslab: { skillsDir: joinSyslabSkills() },
-  }
-  const { bundles } = plugin.discoverSkillBundles(installation)
-  check(bundles.length >= 30, `discovery found ${bundles.length} bundles`)
-  // Every bundle must come from an installation directory; if the opencode
-  // folder contributed anything, some bundle would live outside them.
-  const outsideInstall = bundles.filter((bundle) => (
-    !bundle.dir.startsWith(joinModeling()) && !bundle.dir.startsWith(joinSyslabSkills())
-  ))
-  check(
-    outsideInstall.length === 0,
-    `these skills came from a client folder rather than the installation: ${outsideInstall.map((bundle) => bundle.name).join(', ')}`,
-  )
-  check(
-    bundles.some((bundle) => bundle.name === 'ty-sysplorer-modeling-rules'),
-    'the Sysplorer modeling rules were not discovered from the installation',
-  )
-  // Folded frontmatter must not leak the block marker into the description.
-  const rules = bundles.find((bundle) => bundle.name === 'ty-sysplorer-modeling-rules')
-  check(rules !== undefined && !rules.description.startsWith('>-'), 'folded description was not unfolded')
-  check(rules !== undefined && rules.description.length > 100, 'unfolded description looks truncated')
-}
+  const installationRoot = join(FIXTURE_PATHS.sysplorer, 'Tools', 'sysplorer_mcp', 'resources', 'modeling_skills')
+  const syslabRoot = join(FIXTURE_PATHS.syslab, 'Tools', 'syslab-skills')
+  // A shared client folder: MWORKS names are taken, anything else is left alone.
+  const sharedRoot = join(FIXTURE, 'shared-skills')
+  writeSkill(sharedRoot, FIXTURE_SKILLS.foreign, 'Belongs to another product; must never be claimed.')
+  writeSkill(sharedRoot, 'ty-fixture-from-shared', 'An MWORKS skill that only a client folder has.')
 
-function joinModeling() {
-  return 'E:\\MWORKS\\Sysplorer 2026b\\Tools\\sysplorer_mcp\\resources\\modeling_skills'
-}
-function joinSyslabSkills() {
-  return 'E:\\MWORKS\\Syslab 2026b\\Tools\\syslab-skills'
+  const roots = [
+    { path: installationRoot, authoritative: true },
+    { path: syslabRoot, authoritative: true },
+    { path: sharedRoot, authoritative: false },
+  ]
+  const bundles = plugin.discoverSkillBundlesIn(roots)
+  const names = bundles.map((bundle) => bundle.name)
+  check(names.includes(FIXTURE_SKILLS.modeling), 'the modeling skill was not discovered')
+  check(names.includes(FIXTURE_SKILLS.syslab), 'the Syslab skill was not discovered')
+  check(names.includes('ty-fixture-from-shared'), 'an MWORKS skill in a shared folder was not discovered')
+  check(!names.includes(FIXTURE_SKILLS.foreign), 'a non-MWORKS skill in a shared folder was claimed')
+  check(
+    bundles.find((bundle) => bundle.name === FIXTURE_SKILLS.modeling)?.description.includes('continued on a second folded line'),
+    'folded description was not unfolded',
+  )
+  // The first root that declares a name wins.
+  writeSkill(sharedRoot, FIXTURE_SKILLS.modeling, 'A stale copy from a client folder.')
+  const shadowed = plugin.discoverSkillBundlesIn(roots).find((bundle) => bundle.name === FIXTURE_SKILLS.modeling)
+  check(
+    shadowed !== undefined && shadowed.dir.startsWith(installationRoot),
+    'a stale client-folder copy shadowed the installation copy',
+  )
+  // A missing root is not an error.
+  check(
+    plugin.discoverSkillBundlesIn([{ path: join(FIXTURE, 'does-not-exist'), authoritative: true }]).length === 0,
+    'a missing root produced bundles',
+  )
 }
 
 // ---- disposal releases the registrations
@@ -395,6 +508,8 @@ for (const cleanup of cleanups) {
 check(registrations.length === 0, 'disposal left MCP registrations behind')
 check(tools.size === 0, 'disposal left tools registered')
 
+rmSync(FIXTURE, { recursive: true, force: true })
+
 if (failures.length > 0) {
   console.error('host check FAILED')
   for (const failure of failures) console.error('  -', failure)
@@ -407,4 +522,6 @@ console.log('  tools       :', summary.tools.join(', '))
 console.log('  routes      :', summary.routes.join(', '))
 console.log('  status      : connected / reconnecting mapped, unmanaged handled')
 console.log('  guard       : 405 on wrong method, 403 cross-site, 400 unknown server')
+console.log('  paths       : resolved from the fixture, no machine path in lib/index.js')
+console.log('  skills      : fixture bundles registered, folded frontmatter unfolded, gap fill')
 console.log('  disposal    : registrations and tools released')
