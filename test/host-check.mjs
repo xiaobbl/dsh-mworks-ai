@@ -122,6 +122,20 @@ const skillsService = {
   },
 }
 
+// The Host's connection service: the authoritative access check for a route.
+// `rejection` is mutable so the tests can drive 401, 403 and "allowed". It also
+// mimics the Host's own cross-site fence, because a real `connection` would
+// refuse that before any plugin route sees the request.
+let rejection = undefined
+const connectionSeen = []
+const connectionService = {
+  requestRejection(request) {
+    connectionSeen.push(request)
+    if (rejection !== undefined) return rejection
+    return request.headers?.['sec-fetch-site'] === 'cross-site' ? 403 : undefined
+  },
+}
+
 const ctx = {
   logger: {
     info: (m) => logs.info.push(m),
@@ -131,6 +145,7 @@ const ctx = {
   get: (name) => {
     if (name === 'mcpManager') return manager
     if (name === 'skills') return skillsService
+    if (name === 'connection') return connectionService
     return undefined
   },
   effect(fn) {
@@ -338,10 +353,16 @@ function makeResponse() {
   }
 }
 
-function makeRequest({ method = 'GET', headers = {}, body } = {}) {
+function makeRequest({ method = 'GET', headers = {}, body, omitJsonContentType = false } = {}) {
   const request = new EventEmitter()
   request.method = method
-  request.headers = { host: '127.0.0.1:57619', ...headers }
+  request.headers = {
+    host: '127.0.0.1:57619',
+    // The page posts JSON; omitting the type is how a cross-site simple request
+    // would arrive, so the tests can ask for that shape explicitly.
+    ...(body !== undefined && !omitJsonContentType ? { 'content-type': 'application/json' } : {}),
+    ...headers,
+  }
   if (body !== undefined) {
     request.on('data', () => {})
     setTimeout(() => {
@@ -377,6 +398,96 @@ function makeRequest({ method = 'GET', headers = {}, body } = {}) {
     response,
   )
   check(response.state.status === 403, `cross-site read was not refused (${response.state.status})`)
+}
+
+// ---- the Host's own access check is honoured on both routes
+{
+  // Every route must ask the connection service first.
+  connectionSeen.length = 0
+  const use = async (path, request) => {
+    const response = makeResponse()
+    await routes.get(path).handler(request, response)
+    return response.state.status
+  }
+
+  rejection = 401
+  check(await use('/api/dsh-mworks-ai/environment', makeRequest()) === 401, 'a 401 from the connection service was not propagated')
+  const beforeRestart = restarted.length
+  check(
+    await use('/api/dsh-mworks-ai/restart', makeRequest({ method: 'POST', body: { server: 'mworks_sysplorer' } })) === 401,
+    'the restart route ignored a 401 from the connection service',
+  )
+  check(restarted.length === beforeRestart, 'a rejected request still reached the MCP manager')
+
+  rejection = 403
+  check(await use('/api/dsh-mworks-ai/environment', makeRequest()) === 403, 'a 403 from the connection service was not propagated')
+  check(
+    await use('/api/dsh-mworks-ai/restart', makeRequest({ method: 'POST', body: { server: 'mworks_sysplorer' } })) === 403,
+    'the restart route ignored a 403 from the connection service',
+  )
+
+  rejection = undefined
+  check(await use('/api/dsh-mworks-ai/environment', makeRequest()) === 200, 'an allowed request was refused')
+  check(connectionSeen.length >= 5, `the connection service was consulted ${connectionSeen.length} times for 5 requests`)
+}
+
+// a guard that throws must refuse rather than fall through
+{
+  const response = makeResponse()
+  const throwing = { requestRejection() { throw new Error('boom') } }
+  const saved = connectionService.requestRejection
+  connectionService.requestRejection = throwing.requestRejection
+  const originalGet = ctx.get
+  ctx.get = (name) => (name === 'connection' ? connectionService : originalGet(name))
+  await routes.get('/api/dsh-mworks-ai/environment').handler(makeRequest(), response)
+  connectionService.requestRejection = saved
+  ctx.get = originalGet
+  check(response.state.status === 403, `a throwing guard produced ${response.state.status}, expected 403`)
+}
+
+// ---- the Host's verdict is final: this plugin does not second-guess it
+// A deployment that trusts a non-loopback authority (trustedHosts behind a
+// proxy rewriting Host) produces exactly this shape: the Host allows it, while
+// a local Origin/Host comparison would disagree. Only the Host may decide.
+{
+  rejection = undefined
+  const response = makeResponse()
+  await routes.get('/api/dsh-mworks-ai/environment').handler(
+    makeRequest({ headers: { origin: 'https://harness.internal', host: 'harness.internal:8443' } }),
+    response,
+  )
+  check(
+    response.state.status === 200,
+    `a Host-approved request was rejected locally (${response.state.status})`,
+  )
+}
+
+// ---- without the connection service the local fallback still guards
+{
+  const originalGet = ctx.get
+  ctx.get = (name) => (name === 'connection' ? undefined : originalGet(name))
+  const allowed = makeResponse()
+  await routes.get('/api/dsh-mworks-ai/environment').handler(makeRequest(), allowed)
+  const crossSite = makeResponse()
+  await routes.get('/api/dsh-mworks-ai/environment').handler(
+    makeRequest({ headers: { 'sec-fetch-site': 'cross-site' } }),
+    crossSite,
+  )
+  ctx.get = originalGet
+  check(allowed.state.status === 200, `the fallback refused a same-origin request (${allowed.state.status})`)
+  check(crossSite.state.status === 403, `the fallback admitted a cross-site request (${crossSite.state.status})`)
+}
+
+// a cross-site "simple request" cannot post a restart
+{
+  const before = restarted.length
+  const response = makeResponse()
+  await routes.get('/api/dsh-mworks-ai/restart').handler(
+    makeRequest({ method: 'POST', body: { server: 'mworks_sysplorer' }, omitJsonContentType: true }),
+    response,
+  )
+  check(response.state.status === 415, `a non-JSON restart POST produced ${response.state.status}, expected 415`)
+  check(restarted.length === before, 'a non-JSON restart POST reached the manager')
 }
 
 // POST restart accepts a known server

@@ -20,6 +20,18 @@ The package declares `dsh.bundle.patch` (`cordis.patch.yml`) and `dsh.client`, s
 | Instructions | The official MWORKS working rules: Syslab needs `read_syslab_skill` → `detect_syslab_toolboxes` before any code execution; prefer `Ty*` packages; confirm APIs from local help; call `session_manager` before other Sysplorer tools; keep outputs out of the installation directories. Plus the recovery rule: a MWORKS call that stops answering is not fixed by retrying — read `mworks_mcp_status` and rebuild the server instead. |
 | UI | A **Runtime environment** section on this bundle's own page under **Plugins**, below the configuration the Plugin Manager draws. It lists the detected Syslab and Sysplorer installations and versions, the Julia runtime, both MCP servers with their live connection state, and the MWORKS skills this session can call, with **Re-detect** and, for a server that is not connected, **Reconnect**. The section renders nothing on any other plugin's page. Nothing is added to the conversation. |
 
+## The two HTTP routes
+
+The section reads `GET /api/dsh-mworks-ai/environment`; its **Reconnect** control posts to `POST /api/dsh-mworks-ai/restart`. Both are gated the way the Host's own routes are:
+
+| Layer | What it stops |
+|---|---|
+| `ctx.connection.requestRejection(request)` | The Host's access check: a `Host` fence (loopback, the bind address or `trustedHosts`) that a rebinding page cannot forge, the cross-site and `Origin` fences, and the browser login cookie. Its `401`/`403` is written as-is, and its verdict is **final** — this plugin does not add a second opinion when the service is mounted, because it cannot see the deployment's `trustedHosts`. |
+| Local same-origin test | Fallback for a profile that mounts no `connection` service. On its own it cannot see a bare browser read over plain HTTP, so it is never the only defence. |
+| `application/json` required on `/restart` | A cross-site "simple request" can carry `text/plain` without a CORS preflight; anything else is `415` before the body is parsed. |
+
+A guard that throws refuses rather than falling through.
+
 ## Why the MCP servers are owned by the MCP manager
 
 `cordis.patch.yml` contains only this plugin's own row: the two servers are contributed at runtime through `ctx.mcpManager.register()`, not as bare `@deepseek-ai/dsh-mcp-client` rows. That buys two things a bare row cannot:
