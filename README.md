@@ -82,6 +82,19 @@ Resolution is three steps, first hit wins:
 
 A Julia directory only counts when it really is a runtime (`bin/julia`, not a folder that merely resembles one — Syslab also keeps a `syslab-julia` data directory). The modeling workspace defaults to `~/.dsh-mworks-ai/workspace`, created on demand, so nothing is ever written into the installation directories.
 
+## Which MWORKS releases work
+
+The plugin keys off **layout, not version numbers**, so a new release is picked up without a code change:
+
+| Concern | Behaviour |
+|---|---|
+| A newer release (2027a, a new build) | The directory scan matches any `Syslab <release>` / `Sysplorer <release>` folder and prefers the newest name, so it is found automatically. The version read from `versionInfo/build_info.json` is display only — if that file is gone, detection still works. |
+| A renamed tool directory or binary | The known layout is tried first, then a scan for a `Tools` subdirectory whose name mentions MCP, and inside it a launcher or an executable whose name mentions the product. A release that reorganises `Tools/` still resolves instead of silently reporting "no AI". |
+| A release that predates the MWORKS AI integration (e.g. 2025a) | Reported as **installed but without an MCP payload**. No server is registered (registering a command that cannot start would only fail), the environment report says the release predates the AI integration and names what is missing, and the agent instructions drop the tool rules for that product instead of telling the agent to call tools that do not exist. |
+| Nothing installed | The plugin still loads; the report says which product is missing and the instructions say so. |
+
+Two honest limits: the MCP command-line flags in this plugin were verified against **2026b**, so an older release that ships a server with different flags is untested; and the exact release in which the AI payload first appeared is unknown to me, so the boundary is detected per machine (payload present or not) rather than assumed from a version number. If a release moves the payload somewhere unrecognisable, the report's "AI tooling: none" line is the symptom to look for, and `syslabRoot` / `sysplorerRoot` in the row config is the override.
+
 ## Startup parameters that matter
 
 `cordis.patch.yml` inserts one row, this plugin's own; the two MCP servers are contributed at runtime (see above). Two flags cost a debugging session each:

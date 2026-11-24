@@ -610,7 +610,49 @@ function makeRequest({ method = 'GET', headers = {}, body, omitJsonContentType =
   registrySkills = []
 }
 
-// ---- the contribution can be switched off
+// ---- release tolerance: a newer release, a renamed payload, and a pre-AI one
+{
+  // A future release is just another directory name; discovery is version-agnostic.
+  const future = join(FIXTURE, 'Sysplorer 2027a')
+  mkdirSync(join(future, 'Tools', 'sysplorer_mcp'), { recursive: true })
+  writeFileSync(join(future, 'Tools', 'sysplorer_mcp', 'main.py'), '# future launcher\n')
+  mkdirSync(join(future, 'External', 'python64'), { recursive: true })
+  writeFileSync(join(future, 'External', 'python64', process.platform === 'win32' ? 'python.exe' : 'python'), '')
+  const detectedFuture = plugin.detectInstallation({ sysplorerRoot: future })
+  check(detectedFuture.sysplorer.installed === true, 'a future release directory was not detected')
+  check(detectedFuture.sysplorer.ai.supported === true, 'a future release was treated as having no AI payload')
+
+  // A release that renames the tool directory must still resolve.
+  const renamed = join(FIXTURE, 'Sysplorer renamed')
+  mkdirSync(join(renamed, 'Tools', 'sysplorer-mcp-toolkit'), { recursive: true })
+  writeFileSync(join(renamed, 'Tools', 'sysplorer-mcp-toolkit', 'main.py'), '# renamed launcher\n')
+  mkdirSync(join(renamed, 'External', 'python3'), { recursive: true })
+  writeFileSync(join(renamed, 'External', 'python3', process.platform === 'win32' ? 'python.exe' : 'python'), '')
+  const detectedRenamed = plugin.detectInstallation({ sysplorerRoot: renamed })
+  check(detectedRenamed.sysplorer.mcpLauncher !== undefined, 'a renamed MCP tool directory was not found')
+  check(detectedRenamed.sysplorer.ai.supported === true, 'a renamed payload was not recognised')
+
+  // A release that predates the AI integration: installed, no payload, no server.
+  const preAi = join(FIXTURE, 'Sysplorer 2025a')
+  mkdirSync(join(preAi, 'Bin64'), { recursive: true })
+  const detectedPreAi = plugin.detectInstallation({ sysplorerRoot: preAi })
+  check(detectedPreAi.sysplorer.installed === true, 'a pre-AI release is not reported as installed')
+  check(detectedPreAi.sysplorer.ai.supported === false, 'a pre-AI release claims AI support')
+  check(detectedPreAi.sysplorer.ai.missing.length > 0, 'a pre-AI release reports no reason')
+  check(
+    plugin.resolveServers(detectedPreAi, FIXTURE_PATHS.workspace).every((server) => server.serverName !== 'mworks_sysplorer'),
+    'a pre-AI release contributed an MCP server it cannot run',
+  )
+  const preAiGuidance = plugin.guidanceText(detectedPreAi)
+  check(
+    preAiGuidance.includes('Sysplorer 2025a') && /predates the MWORKS AI integration/.test(preAiGuidance),
+    'the instructions do not explain that this release has no AI tooling',
+  )
+  check(
+    !preAiGuidance.includes('For Sysplorer work, call'),
+    'the instructions still tell the agent to call a tool that does not exist',
+  )
+}
 {
   const before = skillRegistrations.length
   plugin.apply({
