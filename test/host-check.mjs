@@ -111,6 +111,14 @@ const manager = makeManager([
 // fake starts empty so the plugin is expected to contribute its own.
 const skillRegistrations = []
 let registrySkills = []
+// 'skills/change' listeners, so the tests can move the catalog the way another
+// provider appearing or disappearing would.
+const listeners = new Map()
+const fireSkillsChange = async () => {
+  for (const callback of listeners.get('skills/change') ?? []) callback()
+  // The plugin debounces the reaction before it re-reads the catalog.
+  await new Promise((resolve) => setTimeout(resolve, 400))
+}
 const skillsService = {
   async list() { return registrySkills },
   register(skill) {
@@ -152,6 +160,14 @@ const ctx = {
     const cleanup = fn()
     cleanups.push(cleanup)
     return typeof cleanup === 'function' ? cleanup : () => {}
+  },
+  // Event subscription: the plugin re-checks the catalog on 'skills/change',
+  // which is how a provider that disappears is noticed.
+  on(name, callback) {
+    const set = listeners.get(name) ?? new Set()
+    set.add(callback)
+    listeners.set(name, set)
+    return () => set.delete(callback)
   },
   inject(names, callback) {
     // Both services exist in this fake profile.
@@ -522,29 +538,75 @@ function makeRequest({ method = 'GET', headers = {}, body, omitJsonContentType =
   check(restarted.length === before + 1 && restarted.at(-1) === 'mworks_syslab', 'restart tool did not restart the named server')
 }
 
-// ---- gap fill: a skill another provider already resolves is not duplicated
-// (this re-applies the plugin, so it runs after every other assertion)
+// ---- independence: the plugin supplies its skills whatever else is mounted
+// Deferring to another provider would make availability depend on a component
+// this bundle does not own, so the check is that a foreign provider serving the
+// same names changes nothing.
 {
-  const before = new Set(skillRegistrations.map((skill) => skill.name))
-  registrySkills = [{ name: FIXTURE_SKILLS.modeling, description: 'provided elsewhere' }]
-  const second = {
-    ...ctx,
-    get: (name) => {
-      if (name === 'skills') return skillsService
-      return undefined
+  const served = [FIXTURE_SKILLS.modeling, FIXTURE_SKILLS.syslab]
+  registrySkills = served.map((name) => ({ name, description: 'served elsewhere' }))
+
+  const localListeners = new Set()
+  const localRegistrations = []
+  const localService = {
+    async list() { return registrySkills },
+    register(skill) {
+      localRegistrations.push(skill)
+      return () => {
+        const index = localRegistrations.findIndex((entry) => entry.name === skill.name)
+        if (index >= 0) localRegistrations.splice(index, 1)
+      }
+    },
+  }
+  const localCtx = {
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    get: (service) => (service === 'skills' ? localService : undefined),
+    effect(fn) {
+      const cleanup = fn()
+      return () => { if (typeof cleanup === 'function') cleanup() }
+    },
+    on(name, callback) {
+      if (name !== 'skills/change') return () => {}
+      localListeners.add(callback)
+      return () => localListeners.delete(callback)
     },
     inject(names, callback) {
-      callback({ ...second, skills: skillsService, webServer: { register: () => () => {} } })
+      callback({ ...localCtx, skills: localService, webServer: { register: () => () => {} } })
       return () => {}
     },
   }
-  plugin.apply(second, {})
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  const countOf = (name) => skillRegistrations.filter((skill) => skill.name === name).length
+
+  plugin.apply(localCtx, {})
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const contributed = localRegistrations.map((skill) => skill.name)
+  check(contributed.includes(FIXTURE_SKILLS.modeling), 'a foreign provider suppressed the modeling skill')
+  check(contributed.includes(FIXTURE_SKILLS.syslab), 'a foreign provider suppressed the Syslab skill')
   check(
-    countOf(FIXTURE_SKILLS.modeling) === 1,
-    'the plugin registered a skill another provider already resolves',
+    localRegistrations.find((skill) => skill.name === FIXTURE_SKILLS.modeling)?.resourceBase?.path
+      .startsWith(FIXTURE_PATHS.sysplorer),
+    'the contributed skill is not the installation copy',
   )
+
+  // The other provider going away must change nothing.
+  registrySkills = []
+  for (const callback of localListeners) callback()
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  check(
+    localRegistrations.filter((skill) => skill.name === FIXTURE_SKILLS.modeling).length === 1,
+    'the contribution did not survive a provider disappearing',
+  )
+
+  // A bundle deleted from disk must be released, not kept alive by our entry.
+  rmSync(join(FIXTURE_PATHS.sysplorer, 'Tools', 'sysplorer_mcp', 'resources', 'modeling_skills', FIXTURE_SKILLS.modeling), { recursive: true, force: true })
+  for (const callback of localListeners) callback()
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  check(
+    !localRegistrations.map((skill) => skill.name).includes(FIXTURE_SKILLS.modeling),
+    'a bundle deleted from disk stayed registered',
+  )
+
+  // Restore the fixture for the discovery test that follows.
+  writeSkill(join(FIXTURE_PATHS.sysplorer, 'Tools', 'sysplorer_mcp', 'resources', 'modeling_skills'), FIXTURE_SKILLS.modeling, 'Fixture modeling rules for the host check.')
   registrySkills = []
 }
 
@@ -634,5 +696,5 @@ console.log('  routes      :', summary.routes.join(', '))
 console.log('  status      : connected / reconnecting mapped, unmanaged handled')
 console.log('  guard       : 405 on wrong method, 403 cross-site, 400 unknown server')
 console.log('  paths       : resolved from the fixture, no machine path in lib/index.js')
-console.log('  skills      : fixture bundles registered, folded frontmatter unfolded, gap fill')
+console.log('  skills      : contributed regardless of other providers, released when deleted')
 console.log('  disposal    : registrations and tools released')

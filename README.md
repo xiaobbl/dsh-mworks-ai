@@ -43,13 +43,12 @@ Both matter because of a failure mode that otherwise stays invisible: when Syspl
 
 ## Skills
 
-The MWORKS skills are **registered by this plugin from the copies inside the MWORKS installation** (`<Sysplorer>/Tools/sysplorer_mcp/resources/modeling_skills` and `<Syslab>/Tools/syslab-skills`), the same way a skill bundle registers its own `skills/` directory. That matters because the MWORKS installers also copy those bundles into an AI client's folder (`%USERPROFILE%\.config\opencode\skills` for OpenCode), and no DeepSeek Harness provider scans that path on its own — without an explicit contribution, the skills reach the catalog only when some other plugin happens to read that directory.
+The MWORKS skills are **registered by this plugin from the copies inside the MWORKS installation** (`<Sysplorer>/Tools/sysplorer_mcp/resources/modeling_skills` and `<Syslab>/Tools/syslab-skills`), the same way a skill bundle registers its own `skills/` directory. Nothing else has to be installed for them to load.
 
-- **No dependency on OpenCode.** OpenCode need not be installed and its folder need not exist; the plugin reads the installation instead.
-- **No interference.** The plugin writes nothing into any client's skill folder, and it fills a gap only: when the registry already resolves any MWORKS skill, it registers nothing, so it never duplicates or overrides another provider's decisions (including a per-skill disable list).
+- **No dependency on any other component.** The plugin does not defer to another provider, and it does not need one to be present. The MWORKS installers also copy those bundles into an AI client's folder (`%USERPROFILE%\.config\opencode\skills` for OpenCode), and no DeepSeek Harness provider scans that path on its own — so relying on such a copy would make the skills appear or disappear with an unrelated plugin. Registering our own copies makes the outcome the same in every profile: the registry resolves duplicate names by rank, so the installation's copy is the one that wins.
+- **Follows the disk, not the activation moment.** The contribution is re-evaluated on every `skills/change`: a bundle that appears is registered, and one that is deleted or uninstalled is released, so an uninstalled product's skills stop loading instead of lingering.
 - **Only MWORKS skills are taken from shared folders.** Every bundle counts inside the installation directories; from a shared client directory such as OpenCode's, only names MWORKS owns (`ty-`, `syslab-`, `ta-`, `modelica-library-workflow`, `sysplorer-mds-docs`) are claimed.
-- **Gap fill by name.** A skill the registry already resolves is left to whichever provider supplies it; only missing names are registered from the installation.
-- **Opt out.** Set `registerSkills: false` on this plugin's row to stop the contribution entirely, for example when another provider manages the MWORKS skills and you want its per-skill filtering to win.
+- **Opt out.** Set `registerSkills: false` on this plugin's row to stop the contribution entirely.
 - **Names come from frontmatter.** Folded (`>-`) and literal (`|`) descriptions are parsed, and each registration carries a directory `resourceBase`, so a skill's `references/`, `templates/` and `tests/` resolve against the installed bundle.
 
 The Runtime environment section and `mworks_environment` report what the registry actually resolves and say whether that answer came from the registry or from the on-disk scan.
